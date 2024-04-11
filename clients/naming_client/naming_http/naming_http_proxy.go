@@ -19,6 +19,7 @@ package naming_http
 import (
 	"context"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -62,6 +63,21 @@ func NewNamingHttpProxy(ctx context.Context, clientCfg constant.ClientConfig, na
 func (proxy *NamingHttpProxy) RegisterInstance(serviceName string, groupName string, instance model.Instance) (bool, error) {
 	logger.Infof("register instance namespaceId:<%s>,serviceName:<%s> with instance:<%s>",
 		proxy.clientConfig.NamespaceId, serviceName, util.ToJsonString(instance))
+
+	tag := os.Getenv("ALICLOUD_SERVICE_TAG")
+	if tag == "" {
+		tag = "base"
+	}
+
+	//添加节点标签
+	if instance.Metadata == nil {
+		instance.Metadata = map[string]string{
+			"alicloud.service.tag": tag,
+		}
+	} else {
+		instance.Metadata["alicloud.service.tag"] = tag
+	}
+
 	serviceName = util.GetGroupName(serviceName, groupName)
 	params := map[string]string{}
 	params["namespaceId"] = proxy.clientConfig.NamespaceId

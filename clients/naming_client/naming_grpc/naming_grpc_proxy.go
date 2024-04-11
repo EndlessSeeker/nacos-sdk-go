@@ -18,6 +18,7 @@ package naming_grpc
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client/naming_cache"
@@ -94,6 +95,21 @@ func (proxy *NamingGrpcProxy) requestToServer(request rpc_request.IRequest) (rpc
 func (proxy *NamingGrpcProxy) RegisterInstance(serviceName string, groupName string, instance model.Instance) (bool, error) {
 	logger.Infof("register instance namespaceId:<%s>,serviceName:<%s> with instance:<%s>",
 		proxy.clientConfig.NamespaceId, serviceName, util.ToJsonString(instance))
+
+	tag := os.Getenv("ALICLOUD_SERVICE_TAG")
+	if tag == "" {
+		tag = "base"
+	}
+
+	//添加节点标签
+	if instance.Metadata == nil {
+		instance.Metadata = map[string]string{
+			"alicloud.service.tag": tag,
+		}
+	} else {
+		instance.Metadata["alicloud.service.tag"] = tag
+	}
+
 	proxy.eventListener.CacheInstanceForRedo(serviceName, groupName, instance)
 	instanceRequest := rpc_request.NewInstanceRequest(proxy.clientConfig.NamespaceId, serviceName, groupName, "registerInstance", instance)
 	response, err := proxy.requestToServer(instanceRequest)
@@ -107,6 +123,22 @@ func (proxy *NamingGrpcProxy) RegisterInstance(serviceName string, groupName str
 func (proxy *NamingGrpcProxy) BatchRegisterInstance(serviceName string, groupName string, instances []model.Instance) (bool, error) {
 	logger.Infof("batch register instance namespaceId:<%s>,serviceName:<%s> with instance:<%s>",
 		proxy.clientConfig.NamespaceId, serviceName, util.ToJsonString(instances))
+
+	tag := os.Getenv("ALICLOUD_SERVICE_TAG")
+	if tag == "" {
+		tag = "base"
+	}
+	for _, instance := range instances {
+		//添加节点标签
+		if instance.Metadata == nil {
+			instance.Metadata = map[string]string{
+				"alicloud.service.tag": tag,
+			}
+		} else {
+			instance.Metadata["alicloud.service.tag"] = tag
+		}
+	}
+
 	proxy.eventListener.CacheInstancesForRedo(serviceName, groupName, instances)
 	batchInstanceRequest := rpc_request.NewBatchInstanceRequest(proxy.clientConfig.NamespaceId, serviceName, groupName, "batchRegisterInstance", instances)
 	response, err := proxy.requestToServer(batchInstanceRequest)
@@ -185,6 +217,40 @@ func (proxy *NamingGrpcProxy) Subscribe(serviceName, groupName string, clusters 
 		return model.Service{}, err
 	}
 	subscribeServiceResponse := response.(*rpc_response.SubscribeServiceResponse)
+
+	//过滤不符合当前节点标签的实例
+	if len(subscribeServiceResponse.ServiceInfo.Hosts) != 0 {
+		tag := os.Getenv("ALICLOUD_SERVICE_TAG")
+		tagMapList := make([]model.Instance, 0)
+		backUpMapList := make([]model.Instance, 0)
+
+		for _, host := range subscribeServiceResponse.ServiceInfo.Hosts {
+			// 如果没有metadata, 认为是普通实例
+			if host.Metadata == nil {
+				backUpMapList = append(backUpMapList, host)
+				continue
+			}
+
+			instanceTag, ok := host.Metadata["alicloud.service.tag"]
+			if !ok || instanceTag == "base" || instanceTag == "" { //普通节点,加入到backUp列表中
+				backUpMapList = append(backUpMapList, host)
+				continue
+			}
+
+			if instanceTag == tag { // 节点标签和当前标签能够匹配,直接加入列表
+				tagMapList = append(tagMapList, host)
+			} else if (tag == "base" && instanceTag == "") || (tag == "" && instanceTag == "base") || (tag == "" && instanceTag == "") { //兼容普通节点的情况
+				tagMapList = append(tagMapList, host)
+			}
+		}
+
+		if len(tagMapList) != 0 {
+			subscribeServiceResponse.ServiceInfo.Hosts = tagMapList
+		} else if len(backUpMapList) != 0 {
+			subscribeServiceResponse.ServiceInfo.Hosts = backUpMapList
+		}
+	}
+
 	return subscribeServiceResponse.ServiceInfo, nil
 }
 
