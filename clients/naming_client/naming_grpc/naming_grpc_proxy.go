@@ -18,7 +18,6 @@ package naming_grpc
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 
@@ -218,47 +217,6 @@ func (proxy *NamingGrpcProxy) Subscribe(serviceName, groupName string, clusters 
 		return model.Service{}, err
 	}
 	subscribeServiceResponse := response.(*rpc_response.SubscribeServiceResponse)
-
-	//过滤不符合当前节点标签的实例
-	if len(subscribeServiceResponse.ServiceInfo.Hosts) != 0 {
-		tag := os.Getenv("ALICLOUD_SERVICE_TAG")
-		if tag == "" {
-			tag = "base"
-		}
-		fmt.Printf("[NamingGrpcProxy.Subscribe] instance tag: %v\n", tag)
-		tagMapList := make([]model.Instance, 0)    //标签节点列表
-		backUpMapList := make([]model.Instance, 0) //普通节点列表
-
-		for _, host := range subscribeServiceResponse.ServiceInfo.Hosts {
-			// 如果没有metadata, 认为是普通实例
-			if host.Metadata == nil {
-				backUpMapList = append(backUpMapList, host)
-				continue
-			}
-
-			instanceTag, ok := host.Metadata["alicloud.service.tag"]
-			fmt.Printf("[NamingGrpcProxy.Subscribe] host: %v, metadata : %v\n", host, instanceTag)
-			if !ok || instanceTag == "base" || instanceTag == "" { //普通节点,加入到backUp列表中
-				backUpMapList = append(backUpMapList, host)
-				continue
-			}
-
-			if instanceTag == tag {
-				tagMapList = append(tagMapList, host)
-			}
-		}
-
-		if tag != "base" && len(tagMapList) != 0 {
-			fmt.Printf("[NamingGrpcProxy.Subscribe] change host list, tag: %v, list: %v\n", tag, tagMapList)
-			subscribeServiceResponse.ServiceInfo.Hosts = tagMapList
-		}
-		if (tag == "base" || tag == "") && len(backUpMapList) != 0 {
-			fmt.Printf("[NamingGrpcProxy.Subscribe] change host list, tag: %v, list: %v\n", tag, tagMapList)
-			subscribeServiceResponse.ServiceInfo.Hosts = backUpMapList
-		}
-	}
-
-	fmt.Printf("[NamingGrpcProxy.Subscribe] final service info: %v\n", subscribeServiceResponse.ServiceInfo)
 	return subscribeServiceResponse.ServiceInfo, nil
 }
 

@@ -17,6 +17,7 @@
 package naming_cache
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"sort"
@@ -83,6 +84,45 @@ func (s *ServiceInfoHolder) ProcessService(service *model.Service) {
 		}
 	}
 
+	// 灰度节点过滤
+	//过滤不符合当前节点标签的实例
+	tag := os.Getenv("ALICLOUD_SERVICE_TAG")
+	if tag == "" {
+		tag = "base"
+	}
+	fmt.Printf("[NamingGrpcProxy.Subscribe] instance tag: %v\n", tag)
+	tagMapList := make([]model.Instance, 0)    //标签节点列表
+	backUpMapList := make([]model.Instance, 0) //普通节点列表
+
+	for _, host := range service.Hosts {
+		// 如果没有metadata, 认为是普通实例
+		if host.Metadata == nil {
+			backUpMapList = append(backUpMapList, host)
+			continue
+		}
+
+		instanceTag, ok := host.Metadata["alicloud.service.tag"]
+		fmt.Printf("[NamingGrpcProxy.Subscribe] host: %v, metadata : %v\n", host, instanceTag)
+		if !ok || instanceTag == "base" || instanceTag == "" { //普通节点,加入到backUp列表中
+			backUpMapList = append(backUpMapList, host)
+			continue
+		}
+
+		if instanceTag == tag {
+			tagMapList = append(tagMapList, host)
+		}
+	}
+
+	if tag != "base" && len(tagMapList) != 0 {
+		fmt.Printf("[NamingGrpcProxy.Subscribe] change host list, tag: %v, list: %v\n", tag, tagMapList)
+		service.Hosts = tagMapList
+	}
+	if (tag == "base" || tag == "") && len(backUpMapList) != 0 {
+		fmt.Printf("[NamingGrpcProxy.Subscribe] change host list, tag: %v, list: %v\n", tag, backUpMapList)
+		service.Hosts = backUpMapList
+	}
+
+	//继续后续处理
 	cacheKey := util.GetServiceCacheKey(util.GetGroupName(service.Name, service.GroupName), service.Clusters)
 	oldDomain, ok := s.ServiceInfoMap.Load(cacheKey)
 	if ok && oldDomain.(model.Service).LastRefTime >= service.LastRefTime {
